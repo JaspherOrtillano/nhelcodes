@@ -1,0 +1,154 @@
+function onFormSubmit(e) {
+  if (!e) {
+    Logger.log('This function should be triggered by a form submission.');
+    return;
+  }
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(
+    'Onward_Government Benefits'
+  );
+  var row = e.range.getRow();
+
+  // Wait to allow IMPORTRANGE data to load
+  SpreadsheetApp.flush();
+  Utilities.sleep(5000); // Adjust the sleep time if necessary
+
+  // Fetch the data from the submitted row after delay
+  var data = sheet.getRange(row, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var ticketNumber = data[0]; // Ticket No. is in column A
+  var emailAddress = data[2]; // Email Address is in column C
+  var serviceType = data[4]; // Service Type is in column E (updated)
+  var status = data[10]; // Status is in Column K
+
+  Logger.log('Captured status: ' + status + ' for ticket: ' + ticketNumber);
+
+  // Check if an email has already been sent for this row
+  var emailSent = PropertiesService.getScriptProperties().getProperty(
+    'email_sent_' + row
+  );
+  if (emailSent) {
+    Logger.log('Email already sent for row ' + row + ', skipping.');
+    return;
+  }
+
+  // Email template for form submission
+  var emailBody = `
+    <p>Dear Employee,</p>
+    <p>Thank you for your submission!</p>
+    <p>Your HR request has been received and is currently being processed. Your reference ticket number is:</p>
+    <p><strong>Ticket No.: <span style="color:blue; font-weight:bold;">${ticketNumber}</span></strong></p>
+    <p><strong>Request Type: <span style="color:blue; font-weight:bold;">${serviceType}</span></strong></p>
+    <p><strong>Status: <span style="color:blue; font-weight:bold;">${status}</span></strong></p>
+    <p>We aim to address all requests as quickly as possible. If you have any urgent inquiries, please contact the HR department directly.</p>
+    <p>Thank you for your cooperation.</p>
+    <p>Best regards,</p>
+    <p>HR Department</p>
+    <p><em>This is an automated message, please do not reply directly to this email.</em></p>
+  `;
+
+  try {
+    // Send email notification
+    MailApp.sendEmail({
+      to: emailAddress,
+      cc: 'asst-payroll-mngr@onwardworldwide.com, hr.deployed-generalist@onwardworldwide.com',
+      subject: 'Your Employee Government Benefits Request Ticket Number',
+      htmlBody: emailBody,
+    });
+
+    Logger.log('Email sent to: ' + emailAddress);
+
+    // Mark this row as having had an email sent
+    PropertiesService.getScriptProperties().setProperty(
+      'email_sent_' + row,
+      'true'
+    );
+
+    // Store initial status to track changes
+    PropertiesService.getScriptProperties().setProperty(
+      'status_' + row,
+      status
+    );
+  } catch (error) {
+    Logger.log('Error sending email: ' + error.toString());
+  }
+}
+
+function checkStatusChanges() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(
+    'Onward_Government Benefits'
+  );
+  var data = sheet.getDataRange().getValues();
+
+  for (var i = 1; i < data.length; i++) {
+    // Skip the header row
+    var row = i + 1; // Convert 0-based index to 1-based row number
+    var currentStatus = data[i][10]; // Status is in Column K
+    var lastStatus = PropertiesService.getScriptProperties().getProperty(
+      'status_' + row
+    );
+
+    if (currentStatus && currentStatus !== lastStatus) {
+      // Send email only if status has changed
+      var emailAddress = data[i][2]; // Email Address is in column C
+      var serviceType = data[i][4]; // Service Type is in column E (updated)
+      var ticketNumber = data[i][0]; // Ticket No. is in column A
+
+      // Email template for status update
+      var emailBody = `
+        <p>Dear Employee,</p>
+        <p>The status of your request/concern has been updated. Here are the details:</p>
+        <p><strong>Ticket: <span style="color:blue; font-weight:bold;">${ticketNumber}</span></strong></p>
+        <p><strong>Request Type: <span style="color:blue; font-weight:bold;">${serviceType}</span></strong></p>
+        <p><strong>Status: <span style="color:blue; font-weight:bold;">${currentStatus}</span></strong></p>
+        <p>We will keep you updated on any further changes.</p>
+        <p>Best regards,</p>
+        <p>HR Department</p>
+        <p><em>This is an automated message, please do not reply directly to this email.</em></p>
+      `;
+
+      try {
+        // Send email notification
+        MailApp.sendEmail({
+          to: emailAddress,
+          subject: 'Your Ticket Status Update',
+          htmlBody: emailBody,
+        });
+
+        Logger.log('Status update email sent to: ' + emailAddress);
+
+        // Update the stored status to avoid repeated emails
+        PropertiesService.getScriptProperties().setProperty(
+          'status_' + row,
+          currentStatus
+        );
+      } catch (error) {
+        Logger.log('Error sending status update email: ' + error.toString());
+      }
+    }
+  }
+}
+
+function setupTriggers() {
+  // Remove all existing triggers
+  deleteTriggers();
+
+  // Set up the form submit trigger
+  ScriptApp.newTrigger('onFormSubmit')
+    .forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet())
+    .onFormSubmit()
+    .create();
+
+  // Set up the time-driven trigger for status changes
+  ScriptApp.newTrigger('checkStatusChanges')
+    .timeBased()
+    .everyMinutes(10) // Set to 10 minutes
+    .create();
+}
+
+function deleteTriggers() {
+  // Remove all existing triggers
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    ScriptApp.deleteTrigger(triggers[i]);
+  }
+}
